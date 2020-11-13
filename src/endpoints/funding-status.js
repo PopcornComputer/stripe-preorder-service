@@ -1,4 +1,3 @@
-const Joi = require('@hapi/joi')
 const Hoek = require('@hapi/hoek')
 const debug = require('debug')('funding-status')
 const Stripe = require('stripe')
@@ -7,16 +6,12 @@ const PromiseRetry = require('promise-retry')
 const ShopifyStatus = require('../utils/shopify-order-status')
 
 const FundAccepting = (process.env.FUND_ACCEPTING !== undefined) ? process.env.FUND_ACCEPTING == 'true' : false;
-const FundGoal = (process.env.FUND_GOAL !== undefined) ? process.env.FUND_GOAL : 50000;
-
+const FundGoal = (process.env.FUND_GOAL !== undefined) ? Number.parseInt(process.env.FUND_GOAL) : 50000;
 const FundCachedTotal = process.env.FUND_PRE_TOTAL || 0
 
 let stripe = Stripe(process.env.STRIPE_KEY)
-
-
 let cacheTotalAmount = undefined
 let lastUpdate = new moment(0)
-
 
 const crawlOrderStatus = async () => {
 
@@ -73,92 +68,54 @@ const crawlOrderStatus = async () => {
   return status
 }
 
-/*
-
-try{
-  crawlOrderStatus().then(total=>{
-
-    cacheTotalAmount = total
-    debug('total cached', cacheTotalAmount)
-    lastUpdate = new moment()
-
-  }).catch(err=>{
-
-    debug('failed to cache order totals', err)
-
-  })
-}catch(err){
-
-  debug('failed to cache order totals', err)
-
-}
-
-*/
-
 module.exports.funding_status = async (event, context, callback) => {
-  context.callbackWaitsForEmptyEventLoop = false; 
+  context.callbackWaitsForEmptyEventLoop = false;
+  let hasError = false
 
-  try{
+  try {
     const deltaTime = Math.abs( moment().diff(lastUpdate, 'seconds') )
 
-    if(cacheTotalAmount === undefined || deltaTime > 30){
+    if (cacheTotalAmount === undefined || deltaTime > 30) {
       debug('update', deltaTime)
-      
-      const stripeTotal =  await crawlOrderStatus()
-
-      debug('stripeTotal', stripeTotal)
-
+      // const stripeTotal =  await crawlOrderStatus()
+      // debug('stripeTotal', stripeTotal)
       const shopifyTotal = await ShopifyStatus()
-
       debug('shopifyTotal', shopifyTotal)
-
-      cacheTotalAmount = (stripeTotal.raised || 0) + (shopifyTotal.raised || 0)
-
-
+      // cacheTotalAmount = (stripeTotal.raised || 0) + (shopifyTotal.raised || 0)
+      cacheTotalAmount = shopifyTotal.units
       lastUpdate = new moment()
-    }
-    else{
+    } else {
       debug('from cache')
     }
-    
-
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-        'Access-Control-Allow-Origin': process.env.CORS_ORIGIN, // Required for CORS support to work
-        'Access-Control-Allow-Credentials': true, // Required for cookies, authorization headers with HTTPS
-      },
-      body: JSON.stringify({
-        funding: cacheTotalAmount,
-        goal: FundGoal,
-        accepting: FundAccepting,
-        start: moment().startOf('isoWeek').toDate(),
-        end: moment().endOf('isoWeek').toDate(),
-        ts: moment()
-      })
+  } catch (e) {
+    hasError = true
+    debug('ERROR', e)
+  } finally {
+    const fundingStatus = {
+      funding: hasError ? FundCachedTotal : cacheTotalAmount,
+      goal: FundGoal,
+      accepting: FundAccepting,
+      start: moment().startOf('isoWeek').toDate(),
+      end: moment().endOf('isoWeek').toDate(),
+      ts: moment()
     }
 
-
-  } catch (e) {
-    debug('ERROR', e)
+    if (hasError) {
+      fundingStatus.error = 'There was an error getting latest status.'
+    }
 
     return {
       statusCode: 200,
       headers: {
         "Content-Type": "application/json",
-        'Access-Control-Allow-Origin': process.env.CORS_ORIGIN, // Required for CORS support to work
-        'Access-Control-Allow-Credentials': true, // Required for cookies, authorization headers with HTTPS
+
+        // Required for CORS support to work
+        'Access-Control-Allow-Origin': process.env.CORS_ORIGIN,
+
+        // Required for cookies, authorization headers with HTTPS
+        'Access-Control-Allow-Credentials': true,
       },
-      body: JSON.stringify({
-        error: 'There was an error getting latest status.',
-        funding: FundCachedTotal,
-        goal: FundGoal,
-        accepting: FundAccepting,
-        start: moment().startOf('isoWeek').toDate(),
-        end: moment().endOf('isoWeek').toDate(),
-        ts: moment()
-      })
+      body: JSON.stringify(fundingStatus)
     }
   }
 }
