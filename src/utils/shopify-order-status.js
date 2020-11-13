@@ -21,10 +21,14 @@ module.exports = async () => {
     })
 
     // TODO -> Verify which orders should be counted
-    const orderCount = await shopify.order.count({
+    const query = {
       status: 'any',
       financial_status: 'paid'
-    })
+    }
+    if (process.env.SHOPIFY_ORDERS_AFTER) {
+      query.created_at_min = process.env.SHOPIFY_ORDERS_AFTER
+    }
+    const orderCount = await shopify.order.count(query)
     debug('Got paid order count', orderCount)
     units = orderCount
 
